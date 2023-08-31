@@ -4,10 +4,14 @@
         :style="{
             '--container-width': `${containerRect.width}px`,
             '--container-height': `${containerRect.height}px`,
+            '--playbackrate': playbackrate,
             '--danmaku-font-size': danmakuStyle.fontSize,
             '--danmaku-font-weight': danmakuStyle.fontWeight,
+            '--danmaku-text-stroke': danmakuStyle.textStroke,
+            '--danmaku-opacity': danmakuStyle.opacity,
         }">
-        <div class="danmaku"
+        <div class="danmaku" style="opacity: 0;">测试弹幕</div>
+        <div class="danmaku roll"
             v-for="danmaku in danmakuOnScreen"
             :key="danmaku.index"
             :style="{
@@ -22,9 +26,12 @@
     </div>
 </template>
 <script>
+/**
+ * @Todo 实现 底端弹幕、顶端弹幕
+ * @Todo 优化 代码可读性 、健壮性
+ */
 import * as fs from 'fs-extra';
 export default {
-    props: ['path'],
     data() {
         return {
             containerRect: {
@@ -32,24 +39,16 @@ export default {
                 height: 0,
             },
             canvasContext: document.createElement('canvas').getContext('2d'), // 创建canvas, 用于测量文字宽度
+            playbackrate: 1,
             danmakuDuration: 10, // 弹幕持续时间, 调整速度用
             danmakuStyle: { // 弹幕样式
-                fontSize: '32px',
+                fontSize: 32, // px
                 fontWeight: 'bold',
+                textStroke: '',
+                opacity: 0.5
             },
             danmakuList: [], // 弹幕列表, 存放所有弹幕, 按时间排列, index越小时间越早
-            danmakuOnScreen: [{ // 当前屏幕上的弹幕, 按时间排列, index越小时间越早
-                index: -1,
-                time: 0,
-                fontSize: 25,
-                color: 'rgba(0, 0, 0, 0)',
-                text: '测试弹幕',
-                channel: -1,
-                channelTop: 0,
-                timeleft: 0,
-                progress: 0,
-                enterTime: 0,
-            }],
+            danmakuOnScreen: [],
 
             danmakuHeight: 0, // 弹幕高度, 用于计算最大通道数
             channelMax: 0, // 最大通道数
@@ -63,28 +62,31 @@ export default {
             paused: true
         }
     },
+    // 需要操作元素, 所以在mounted中完成初始化
     mounted() {
-        // 需要操作元素, 所以在mounted中初始化
         this.init();
+        window.getTextWidth = this.getTextWidth;
     },
     methods: {
         init() {
-            // 获取测试弹幕样式
-            let testDanmaku = this.$el.firstElementChild
-            let testDanmakuStyle = getComputedStyle(testDanmaku);
-            this.canvasContext.font = testDanmakuStyle.font;
-            this.danmakuHeight = parseInt(testDanmakuStyle.height.slice(0, -2));
-
-            // 移除测试弹幕
-            this.danmakuOnScreen = [];
-
             // 监听窗口大小变化
             window.addEventListener('resize', this.resize);
             // 立即更新
             this.resize();
         },
         resize() {
+            // 更新弹幕容器大小
             this.containerRect = this.$el.getBoundingClientRect();
+
+            // 动态更新样式
+            this.reactiveFontStyle();
+            // 获取测试弹幕样式
+            let testDanmaku = this.$el.firstElementChild
+            let testDanmakuStyle = getComputedStyle(testDanmaku);
+            // 传递给 canvas, 用于计算文本宽高
+            this.canvasContext.font = testDanmakuStyle.font;
+            this.danmakuHeight = parseInt(testDanmakuStyle.height.slice(0, -2)) + 4;
+            // 根据文本高度计算弹道
             this.channelMax = Math.floor(this.containerRect.height / (this.danmakuHeight + this.channelSpare)); // 最大通道数
             for (let i = 0; i < this.channelMax; i++) {
                 if (!Number.isInteger(this.danmakuChannels[i])) {
@@ -92,23 +94,20 @@ export default {
                 }
             }
         },
-        getTextWidth(text) {
-            let { width } = this.canvasContext.measureText(text);
-            return width;
-        },
         // danmaku文件解析: https://blog.csdn.net/bigbigsman/article/details/78639053
-        loadDanmaku() {
+        loadDanmaku(path) {
             // 检测文件是否能读取
-            if (!fs.existsSync(this.path)) {
+            if (!fs.existsSync(path)) {
                 console.warn('加载弹幕失败, 弹幕文件不存在!');
                 return;
             }
 
             // 重置弹幕
+            this.pause();
             this.reset();
 
             // 读取弹幕文件
-            let text = fs.readFileSync(this.path);
+            let text = fs.readFileSync(path);
             // 解析xml
             let danmakuDoc = this.XMLparse(text);
             // 获取弹幕列表
@@ -117,7 +116,6 @@ export default {
             // XML doc 转 json
             for (let danmakuElem of danmakuElems) {
                 let attrs = danmakuElem.getAttribute('p');
-                // 391.11800,1,25,16777215,1680701402,0,ef87b767,1288575775670691328,10
                 let [time, type, fontSize, color, timestamp, pool, uid, rowId] = attrs.split(',');
                 let danmaku = {
                     time: parseFloat(time), // 弹幕出现时间(s)
@@ -160,13 +158,86 @@ export default {
         //     let xmlString = serializer.serializeToString(xmlDoc)
         //     return xmlString
         // },
+        reactiveFontStyle() {
+            // 字体缩放倍率
+            let fontScale = 0.8;
+            let containerHeight = this.containerRect.height;
+            // 分辨率:字体大小 规则
+            let rules = [
+                { min: 0, max: 320, get fontSize() { return 16; } }, // 高度在320px以下时固定16px字体
+                { min: 320, max: 500, get fontSize() { return (containerHeight * 0.0385 + 3.3) * fontScale; } }, //3.29
+                { min: 500, max: 620, get fontSize() { return (containerHeight * 0.0428 + 0.92) * fontScale; } }, // 0.9167
+                { min: 620, max: Infinity, get fontSize() { return (containerHeight * 0.022 + 12) * fontScale } }, // 12
+            ];
+            // 匹配规则
+            let matchedRule = rules.find(rule => rule.min <= containerHeight && containerHeight < rule.max);
+            let fontSize = matchedRule.fontSize;
+            // 修改字体大小
+            this.danmakuStyle.fontSize = `${fontSize}px`;
+
+            // 生成内外两圈描边
+            let innerTextStroke = Math.max(fontSize * 0.065, 1.35); // 内层黑色描边, 最低1px宽度
+            let outerTextStroke = innerTextStroke * 1.55; // 外层白色描边
+            this.danmakuStyle.textStroke = [this.genTextStroke('#000000', innerTextStroke),
+            this.genTextStroke('#FFFFFF', outerTextStroke),
+                '2px 2px 4px #000000',
+                '0 0 16px #000000'
+            ].join(',');
+        },
+        // 生成文本描边
+        genTextStroke(color, width) {
+            let textStroke = {
+                shadows: [],
+                add(h, v, blur, color) {
+                    this.shadows.push([this.num2px(h), this.num2px(v), this.num2px(blur), color].join(' '));
+                },
+                num2px(num, maxLen = 4) {
+                    const factor = Math.pow(10, maxLen);
+                    const formatted = Math.round(num * factor) / factor;
+                    if (formatted == 0) return '0';
+                    return formatted + 'px';
+                },
+                toString() {
+                    return Array.from(new Set(this.shadows)).join(', ');
+                }
+            };
+            // 虚化半径, 抗锯齿
+            let blur = 0.5;
+
+            // 基础阴影
+            textStroke.add(0, -width, blur, color); // 上
+            textStroke.add(width, 0, blur, color); // 右
+            textStroke.add(0, width, blur, color); // 下
+            textStroke.add(-width, 0, blur, color); // 左
+
+            // { '无': 0, '低': 1, '中': 2, '高': 4}
+            let level = 1;
+            // 字体阴影的数量 (向上取整是为了均匀分布)
+            let amount = Math.ceil(width * Math.PI * level);
+            for (var i = 0; i < amount; i++) { // 在 amount 个方向上均匀分布
+                let theta = Math.PI * 2 * i / amount; // 2 pi等于360°, 按百分比取角度
+                let delta_x = width * Math.sin(theta); // x轴偏移量
+                let delta_y = width * Math.cos(theta); // y轴偏移量
+                textStroke.add(delta_x, delta_y, blur, color);
+            }
+
+            return textStroke.toString();
+        },
+        // 如果将danmaku制作成子组件, 就可以在mounted中获取到更准确的宽度
+        getTextWidth(text) {
+            return this.canvasContext.measureText(text).width;
+        },
         reset() {
+            // 暂停弹幕播放
             this.pause();
+            // 情况清空弹幕
             this.danmakuList = [];
             this.danmakuOnScreen = [];
-            for (let i of Object.keys(this.danmakuChannels)) {
+            // 清空轨道
+            for (let i in this.danmakuChannels) {
                 this.danmakuChannels[i] = 0;
             }
+            // 重置状态
             this.currentTime = 0;
             this.renderIndex = 0;
         },
@@ -178,6 +249,7 @@ export default {
         render() {
             let now = performance.now();
             let timeDiff = now - this.lastRenderTime;
+            timeDiff *= this.playbackrate;
             this.currentTime += timeDiff / 1000;
 
             this.clearChannels();
@@ -199,11 +271,14 @@ export default {
             }
 
             // 清除过期弹幕
-            while (this.danmakuOnScreen[0].time < this.currentTime - this.danmakuDuration) {
+            while (this.danmakuOnScreen[0] !== undefined && (this.danmakuOnScreen[0].time < this.currentTime - this.danmakuDuration)) {
                 this.danmakuOnScreen.shift(1);
             }
 
             this.lastRenderTime = now;
+            // 检查渲染终止
+            if (this.paused)
+                return;
             this.renderTimer = requestAnimationFrame(this.render);
         },
         pause() {
@@ -214,7 +289,8 @@ export default {
             // 允许误差0.5s
             if (Math.abs(time - this.currentTime) < 0.5)
                 return;
-            for (let i of Object.keys(this.danmakuChannels)) {
+            // 清空轨道
+            for (let i in this.danmakuChannels) {
                 this.danmakuChannels[i] = 0;
             }
 
@@ -262,7 +338,7 @@ export default {
             danmaku.progress = timeused / this.danmakuDuration;
             let speed = (danmaku.width + this.containerRect.width) / this.danmakuDuration;
             // 弹幕尾部进入屏幕的时间
-            danmaku.enterTime = danmaku.time + danmaku.width / speed;
+            danmaku.enterTime = danmaku.time + danmaku.width / speed + 1;
         },
         // 给弹幕分配发射轨道
         allocateChannel(danmaku) {
@@ -271,7 +347,7 @@ export default {
             let targetCount = this.danmakuChannels[0]; // 弹幕通道的弹幕数量
             // 遍历通道, 找到弹幕数量最少的通道
             for (let i in this.danmakuChannels) {
-                if (i > this.channelMax)
+                if (i >= this.channelMax)
                     break;
                 let channelCount = this.danmakuChannels[i];
                 if (channelCount < targetCount) {
@@ -296,11 +372,6 @@ export default {
                 }
             }
         }
-    },
-    watch: {
-        path() {
-            this.loadDanmaku();
-        }
     }
 }
 </script>
@@ -324,21 +395,24 @@ export default {
         }
 
         to {
-            transform: translateX(calc(-1 * var(--danmaku-width)));
+            // 出屏幕4px再停止动画
+            transform: translateX(calc(-100% - 4px));
         }
     }
 
-    .danmaku {
+    .danmaku.roll {
         position: absolute;
         top: var(--channel-top);
         color: var(--color);
+        opacity: var(--danmaku-opacity);
         font-size: var(--danmaku-font-size);
         font-weight: var(--danmaku-font-weight);
-        animation: roll linear var(--timeleft) forwards;
-        text-rendering: optimizeSpeed;
+        text-shadow: var(--danmaku-text-stroke);
+        animation: roll linear calc(var(--timeleft) / var(--playbackrate)) forwards;
+        // text-rendering: optimizeSpeed;
     }
 
-    &.paused>.danmaku {
+    &.paused>.danmaku.roll {
         animation-play-state: paused !important;
     }
 }

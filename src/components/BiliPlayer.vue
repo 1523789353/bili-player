@@ -1,10 +1,41 @@
 <template>
     <div class="bili-player">
-        <DanmakuLayer ref="danmaku" :path="danmakuPath" />
+        <DanmakuLayer ref="danmaku" />
         <video ref="video" class="video" controls autoplay />
+        <div class="panel">
+            <div class="top"></div>
+            <div class="bottom">
+                <div class="mask"></div>
+                <div class="highlight"></div>
+                <div class="progress">
+                    <div class="buffered"></div>
+                    <div class="played"></div>
+                </div>
+                <div class="controls">
+                    <div class="left">
+                        <div class="button" :class="{ play, pause: !play }"></div>
+                        <div class="time"></div>
+                    </div>
+                    <div class="right">
+                        <div class="quality"></div>
+                        <div class="playback-rate"></div>
+                        <div class="subtitle"></div>
+                        <div class="volume" :class="{ mute }"></div>
+                        <div class="settings"></div>
+                        <div v-if="false" class="picture-in-picture"></div>
+                        <div v-if="false" class="wide-screen"></div>
+                        <div v-if="false" class="maximize"></div>
+                        <div class="fullscreen"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 <script>
+/**
+ * @Todo 实现 控制界面
+ */
 import path from 'path';
 import * as fs from 'fs-extra';
 import DanmakuLayer from '@/components/DanmakuLayer';
@@ -21,7 +52,8 @@ export default {
                 cid: '',
                 type: ''
             },
-            danmakuPath: '', // 弹幕路径
+            play: false,
+            mute: false
         }
     },
     mounted() {
@@ -43,13 +75,16 @@ export default {
             this.$refs.danmaku.reset();
 
             // 监听 MediaSource 的 sourceopen 事件
-            this.waitEvent(mediaSource, 'sourceopen').then(() => this.sourceopen(mediaSource))
+            mediaSource.addEventListener('sourceopen', () => {
+                this.sourceopen(mediaSource);
+            }, { once: true });
         },
         async sourceopen(mediaSource) {
             const taskPath = path.join(this.downloadDir, 'zzdownloadtaskmanagertask', 'av', this.videoInfo.avid, 'c' + this.videoInfo.cid, this.videoInfo.type);
             const videoPath = path.join(taskPath, '0.section');
             const audioPath = path.join(taskPath, '1.section');
-            this.danmakuPath = path.join(taskPath, `av_${this.videoInfo.avid}_c${this.videoInfo.cid}.danmaku`);
+            const danmakuPath = path.join(taskPath, `av_${this.videoInfo.avid}_c${this.videoInfo.cid}.danmaku`);
+            this.$refs.danmaku.loadDanmaku(danmakuPath);
 
             const videoBuffer = fs.readFileSync(videoPath);
             const audioBuffer = fs.readFileSync(audioPath);
@@ -61,13 +96,6 @@ export default {
             // 添加视频和音频数据到 SourceBuffer
             videoSourceBuffer.appendBuffer(new Uint8Array(videoBuffer));
             audioSourceBuffer.appendBuffer(new Uint8Array(audioBuffer));
-        },
-        waitEvent(eventTarget, event) {
-            return new Promise(resolve => {
-                eventTarget.addEventListener(event, () => {
-                    resolve();
-                }, { once: true })
-            })
         },
         hookEvent() {
             // 播放同步
@@ -84,6 +112,11 @@ export default {
             this.$refs.video.addEventListener('seeked', () => {
                 this.syncDanmaku();
             })
+            // 播放倍速同步
+            this.$refs.video.addEventListener('ratechange', () => {
+                this.$refs.danmaku.playbackrate = this.$refs.video.playbackRate;
+                this.syncDanmaku();
+            });
         },
         syncDanmaku() {
             this.$refs.danmaku.seek(this.$refs.video.currentTime);

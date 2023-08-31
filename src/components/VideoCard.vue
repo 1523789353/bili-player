@@ -9,6 +9,7 @@
             <div class="video-info">
                 <span class="quality">{{ video.task.meta.qualityName }}</span>
                 <span class="size">{{ totalSize }}</span>
+                <span class="inspect" @click="inspect">查看</span>
                 <span class="export" @click="exportVideo">导出</span>
             </div>
         </div>
@@ -56,6 +57,10 @@ export default {
             this.$mitt.emit('video-play', this.video.task);
             document.title = this.title;
         },
+        async inspect() {
+            let taskPath = path.join(this.downloadDir, 'zzdownloadtaskmanagertask', 'av', this.video.avid, 'c' + this.video.task.meta.cid, this.video.task.meta.typeTag)
+            this.runCmd(`explorer /select,"${taskPath}"`).catch(() => { });
+        },
         async exportVideo() {
             let selectResult = await this.$remote.dialog.showSaveDialog({
                 // 默认文件名
@@ -78,7 +83,7 @@ export default {
                 console.log('导出成功:', err, stdout, stderr);
                 this.runCmd(`explorer /select,"${output}"`).catch(() => { });
             }, ({ err, stdout, stderr }) => {
-                console.log('导出失败:', err, stdout, stderr);
+                console.error('导出失败:', err, stdout, stderr);
             })
         },
         async runCmd(cmdline) {
@@ -143,6 +148,7 @@ export default {
                 margin-right: 12px;
             }
 
+            .inspect,
             .export {
                 // 链接颜色
                 color: #00a1d6;

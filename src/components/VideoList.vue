@@ -87,17 +87,20 @@ export default {
                 // drama 转 videoList
                 let videoList = {
                     type: 'drama', // 测试用
+                    __drama: drama, // 测试用
                     title: drama.title,
-                    videos: []
+                    videos: [],
                 }
                 // drama.avArr 转换为 videoList.videos
                 for (let av of drama.avArr) {
-                    let video = { index: av.sectionIdx, avid: av.avid };
+                    // 按 ep ID (分集ID)排序, 并记录avid
+                    let video = { index: av.epIdx, avid: av.avid };
                     // 放入 map, 以便后续匹配
                     avMap[video.avid] = video;
+                    // 放入 videoList
                     videoList.videos.push(video);
                 }
-                // 对合集视频进行排序
+                // 对合集视频进行排序(按epid)
                 videoList.videos.sort((v1, v2) => v1.index - v2.index);
                 videoLists.push(videoList);
             }
